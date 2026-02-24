@@ -1,0 +1,37 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write signing key
+        env:
+          CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
+        run: printf '%s' "$CRX_PRIVATE_KEY" > key.pem
+
+      - name: Pack extension (CRX)
+        run: |
+          google-chrome --pack-extension=./src --pack-extension-key=./key.pem
+          mv src.crx "bookmate-downloader-${{ github.ref_name }}.crx"
+
+      - name: Pack extension (ZIP)
+        run: cd src && zip -r "../bookmate-downloader-${{ github.ref_name }}.zip" .
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bookmate-downloader-${{ github.ref_name }}.crx
+            bookmate-downloader-${{ github.ref_name }}.zip
+          generate_release_notes: true

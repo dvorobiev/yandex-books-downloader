@@ -23,6 +23,20 @@ Download the file and read on your favourite e-book device or listen to audioboo
 
 ## Installation
 
+### Option A — Pre-built release (recommended)
+
+1. Go to the [Releases](../../releases) page and download the latest `bookmate-downloader-vX.X.X.crx` file.
+2. Open Chrome and navigate to `chrome://extensions`.
+3. Enable **Developer mode** (toggle in the top-right corner).
+4. Drag and drop the downloaded `.crx` file onto the Extensions page.
+5. Click **Add extension** when Chrome prompts you.
+
+> **Note:** Chrome may display a warning about installing extensions from outside the Web Store — this is expected for sideloaded extensions. The extension is signed with a consistent private key so Chrome will recognise it as the same extension across updates.
+
+Alternatively, download the `bookmate-downloader-vX.X.X.zip` archive from the same release, extract it, and follow the **Load unpacked** steps below.
+
+### Option B — Load unpacked (development)
+
 1. Clone or download this repository.
 2. Open Chrome and navigate to `chrome://extensions`.
 3. Enable **Developer mode** (toggle in the top-right corner).

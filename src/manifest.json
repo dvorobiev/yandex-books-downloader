@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bookmate Downloader",
-  "version": "1.0",
+  "version": "1.2",
   "description": "Download Bookmate books as EPUB files directly from your browser.",
   "permissions": [
     "cookies",

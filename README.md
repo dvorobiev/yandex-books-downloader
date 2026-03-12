@@ -58,6 +58,8 @@ Alternatively, download the `bookmate-downloader-vX.X.X.zip` archive from the sa
    - Audiobook, single track: `<Title> - <Author>.m4a`
    - Audiobook, multiple tracks: `<Title> - Chapter N - <Author>.m4a` (supported download as zip folder)
 
+For large audiobooks with multiple tracks, it is recommended to download them as a zip folder to browser blocking multiple file downloads.
+
 ## Options
 
 | Option | Default | Visible on | Description |

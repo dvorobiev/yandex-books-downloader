@@ -274,6 +274,9 @@ function injectButton(bookid, bookType) {
 
   btn.addEventListener('click', async () => {
     let state = 'initial';
+    let pendingFileHandle = null; // FileSystemFileHandle for zip-chunk/zip-end
+    let pendingZipChunks = [];   // assembled chunks indexed by seq
+    let savedFilename = null;
     btn.disabled = true;
     btn.innerHTML = ICON_DOWNLOADING;
     btn.style.opacity = '0.45';
@@ -305,6 +308,31 @@ function injectButton(bookid, bookType) {
         if (typeof msg.pct === 'number') toast.setProgress(msg.pct);
       }
 
+      if (msg.type === 'zip-chunk') {
+        pendingZipChunks[msg.seq] = new Uint8Array(msg.data);
+      }
+
+      if (msg.type === 'zip-end') {
+        const handle = pendingFileHandle;
+        const chunks = pendingZipChunks.slice();
+        pendingFileHandle = null;
+        pendingZipChunks = [];
+        (async () => {
+          try {
+            const writable = await handle.createWritable();
+            for (const chunk of chunks) await writable.write(chunk);
+            await writable.close();
+            resetBtn();
+            toast.setProgress(100);
+            toast.log(`✓ Saved as: ${savedFilename ?? msg.filename}`, 'success');
+            setTimeout(() => toast.hide(), 6000);
+          } catch (err) {
+            resetBtn();
+            toast.log(`✗ Failed to write file: ${err.message}`, 'error');
+          }
+        })();
+      }
+
       if (msg.type === state) return;
       state = msg.type;
 
@@ -312,13 +340,36 @@ function injectButton(bookid, bookType) {
         // Got track count — decide immediately or show choice UI
         if (msg.trackCount === 1) {
           startDownload(false);
-        } else {
-          showChoicePanel(
-            msg.trackCount, wrapper, btn,
-            (asZip) => { state = 'initial'; startDownload(asZip); },
-            () => resetBtn(),
-          );
+          return;
         }
+
+        showChoicePanel(
+          msg.trackCount, wrapper, btn,
+          async (asZip) => {
+            state = 'initial';
+            if (!asZip) {
+              startDownload(false);
+              return;
+            }
+
+            pendingFileHandle = null;
+            try {
+              pendingFileHandle = await window.showSaveFilePicker({
+                suggestedName: `${msg.titlePart}${msg.authorSfx}.zip`,
+                types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }],
+              });
+              pendingZipChunks = [];
+              savedFilename = (await pendingFileHandle.getFile()).name;
+            } catch (err) {
+              if (err.name === 'AbortError') { resetBtn(); return; }
+              toast.log(`Could not open save dialog: ${err.message}`, 'error');
+              resetBtn();
+              return;
+            }
+            startDownload(true);
+          },
+          () => resetBtn(),
+        );
         return;
       }
 

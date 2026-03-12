@@ -11,7 +11,7 @@ no build step. The `src/` folder is loaded directly as an unpacked extension.
 | File | Role |
 |---|---|
 | `src/manifest.json` | MV3 manifest — permissions, content-script declaration, service-worker registration (`"type": "module"` enables ES module imports in the service worker) |
-| `src/background.js` | Service worker entry point — `chrome.runtime.onConnect` message handler; dispatches to `downloadBook`, `downloadSerial`, or `downloadAudiobook` based on `msg.bookType` (`BookType` enum) |
+| `src/background.js` | Service worker entry point — `chrome.runtime.onConnect` message handler; dispatches to `downloadBook`, `downloadSerial`, or `downloadAudiobook` based on `msg.bookType` (`BookType` enum); contains `sendBackZipInChunks` which streams finished ZIP bytes back to the popup in 1 MB chunks via `zip-chunk`/`zip-end` messages |
 | `src/lib/booktype.js` | `BookType` frozen enum — `BOOK`, `SERIAL`, `AUDIO`, `COMICBOOK`, `SERIES`; imported by `background.js` and the `lib/` modules. **Also inlined verbatim in `content.js` and `popup.js`** (plain scripts cannot use ES module imports) — keep all three copies in sync |
 | `src/lib/crc32.js` | CRC-32 lookup-table implementation (`CRC_TABLE`, `crc32`) |
 | `src/lib/http.js` | Shared HTTP/file utilities — `READER_BASE` constant, `fetchWithCookie`, `blobToDataUrl`, `safeName`; imported by `bookmate.js` and `audiobook.js` to eliminate duplication |
@@ -19,7 +19,7 @@ no build step. The `src/` folder is loaded directly as an unpacked extension.
 | `src/lib/decrypt.js` | AES-CBC decryption via Web Crypto API (`base64ToBytes`, `decryptValue`) and `extractClientParams` HTML parser |
 | `src/lib/bookmate.js` | Bookmate download orchestration (`downloadBook`, `downloadSerial`); private helpers: `decryptMeta`, `parseOpfHrefs`, `downloadContentFiles`, `stripCssFiles`, `buildEpubFilename`, `saveEpubBlob`; imports from `epub.js`, `decrypt.js`, `merge.js`, `http.js` |
 | `src/lib/merge.js` | In-memory EPUB episode merger (`mergeEpisodes`); regex-based XML manipulation of OPF manifest/spine and NCX navMap — mirrors Python `EpubMerger` |
-| `src/lib/audiobook.js` | Audiobook download logic (`fetchAudiobookMeta`, `downloadAudiobook`); private helpers: `resolveTrack` (resolves track number + `.m4a` URL), `trackBaseName` (builds filename stem); imports from `epub.js` and `http.js` |
+| `src/lib/audiobook.js` | Audiobook download logic (`fetchAudiobookMeta`, `downloadAudiobook`); private helpers: `resolveTrack` (resolves track number + `.m4a` URL), `trackBaseName` (builds filename stem), `downloadAudiobookIndividual` (one `chrome.downloads` call per track), `downloadAudiobookAsZip` (fetches all tracks, builds ZIP, calls `onZipReady` callback); imports from `epub.js` and `http.js` |
 | `src/content.js` | Injected into every `*.bookmate.com` page (plain script) — detects book pages, injects a download `<button>` into `.buttons-row__container`, handles SPA navigation via `window.navigation` |
 | `src/popup.html` | Toolbar popup UI — dark theme, CSS variables, progress bar, scrollable log box |
 | `src/popup.js` | Popup logic (plain script) — reads active-tab URL to extract book ID and `BookType`, persists `stripCss` via `chrome.storage.sync`, communicates with background via a long-lived port |
@@ -82,11 +82,16 @@ popup.js / content.js
            7. port.postMessage({ type: 'success'|'progress'|'error', ... })
 
        If asZip is true (ZIP bundle, only sent when trackCount > 1):
-           5. Fetch each .m4a as ArrayBuffer via fetchWithCookie()
-           6. buildZip() → ZIP blob (all entries ZIP_STORED — no compression)
-           7. blobToDataUrl() → data-URL (chrome.downloads doesn't accept blob: URLs)
-           8. chrome.downloads.download() of the single .zip file
-           9. port.postMessage({ type: 'success'|'progress'|'error', ... })
+            5. popup.js calls window.showSaveFilePicker() to get a FileSystemFileHandle
+               before the download message is sent
+            6. background.js calls downloadAudiobook(..., onZipReady = sendBackZipInChunks(port))
+            7. downloadAudiobookAsZip fetches each .m4a as ArrayBuffer via fetchWithCookie()
+            8. buildZip() → ZIP Uint8Array (all entries ZIP_STORED — no compression)
+            9. onZipReady(zipBytes) is called — sendBackZipInChunks streams the bytes back
+               to the popup in 16 MB slices as { type: 'zip-chunk', seq, data, ln } messages,
+               followed by { type: 'zip-end' }
+           10. popup.js reassembles chunks, writes them to disk via FileSystemFileHandle.createWritable()
+           11. background returns null (no separate 'success' sent); popup logs its own success
 ```
 
 ## Key Technical Details
@@ -144,15 +149,18 @@ Every algorithm is implemented from scratch using only browser-native APIs:
 ### Audiobook (`src/lib/audiobook.js`)
 `fetchAudiobookMeta(bookid)`:
 - Parallel-fetches audiobook info + playlist
-- Returns `{ bookTitle, bookAuthors, tracks }` without triggering any download
+- Returns `{ bookTitle, tracks, titlePart, authorSfx }` without triggering any download
+  - `titlePart` = `safeName(bookTitle)` — sanitised title ready for use in filenames
+  - `authorSfx` = `" - " + safeName(authors)` or `""` if no authors
 - Called by the `audiobook-meta` action handler in `background.js` to report track count to the popup
 
-`downloadAudiobook(bookid, maxBitRate, asZip, onProgress)`:
+`downloadAudiobook(bookid, maxBitRate, asZip, onProgress, onZipReady = null)`:
 - Calls `fetchAudiobookMeta` internally to avoid duplicate requests
 - Selects `max_bit_rate` or `min_bit_rate` track variant based on the `maxBitRate` boolean
 - Derives the `.m4a` URL via `.replace(/\.m3u8(\?.*)?$/, '.m4a')`
-- `asZip = false`: calls `chrome.downloads.download({ url, filename })` once per track — direct CDN URLs work without a data-URL conversion
-- `asZip = true`: fetches each `.m4a` as `ArrayBuffer`, packs them into a ZIP via `buildZip` (ZIP_STORED), converts to data-URL, triggers a single download of the `.zip` file
+- `asZip = false`: delegates to `downloadAudiobookIndividual` — calls `chrome.downloads.download({ url, filename })` once per track (direct CDN URLs, no data-URL conversion needed)
+- `asZip = true`: delegates to `downloadAudiobookAsZip` — fetches all tracks as `ArrayBuffer`, builds a ZIP via `buildZip` (ZIP_STORED), then calls `onZipReady(zipBytes)`. Returns `null` to signal that saving was handled by the callback.
+  - `onZipReady` is always provided when `asZip = true` (background passes `sendBackZipInChunks(port)`)
 - Filename: `{title} - {author}.m4a` (single track) or `{title} - Chapter {N} - {author}.m4a` (multiple, individual) or `{title} - {author}.zip` (zip bundle)
 
 ### Serial / Episode API
@@ -180,9 +188,11 @@ Port name: `'bookmate-download'`
 |---|---|
 | sender → background | `{ action: 'download', bookid: string, bookType: BookType, asZip: boolean, stripCss: boolean, maxBitRate: boolean }` |
 | sender → background | `{ action: 'audiobook-meta', bookid: string }` |
-| background → sender | `{ type: 'audiobook-meta', trackCount: number, title: string }` |
+| background → sender | `{ type: 'audiobook-meta', trackCount: number, title: string, titlePart: string, authorSfx: string }` |
 | background → sender | `{ type: 'progress', text: string, pct: number }` |
-| background → sender | `{ type: 'success', filename: string }` |
+| background → sender | `{ type: 'zip-chunk', seq: number, data: number[], ln: number }` — one 1 MB slice of the ZIP bytes |
+| background → sender | `{ type: 'zip-end' }` — all ZIP chunks have been sent; popup should flush the FileSystemFileHandle |
+| background → sender | `{ type: 'success', filename: string }` — **not** sent for ZIP audiobooks (popup handles its own success log) |
 | background → sender | `{ type: 'error', text: string }` |
 
 `port.onDisconnect` is handled on both sides to cope with the service worker being killed by the browser during a long download.
@@ -221,7 +231,7 @@ Port name: `'bookmate-download'`
 2. **Episode merge CSS skipping** — CSS files from episode 2+ are intentionally dropped; all episodes share episode 1's stylesheet. This may cause styling issues if episodes have unique CSS.
 3. **`window.CLIENT_PARAMS` extraction** — depends on finding the literal string and a `=...;` pattern on the same logical line
 4. **Sequential content file downloads** — large books can be slow; parallelising with `Promise.all` in batches is a possible improvement but risks rate-limiting
-5. **Data-URL download workaround** — `chrome.downloads.download` doesn't accept `blob:` URLs from service workers, so blobs are converted to `data:` URLs via `FileReader` first (`blobToDataUrl`); individual audiobook track downloads bypass this because they use direct CDN URLs, but ZIP bundle downloads do go through `blobToDataUrl`
+5. **Data-URL download workaround** — `chrome.downloads.download` doesn't accept `blob:` URLs from service workers, so EPUB/serial blobs are converted to `data:` URLs via `FileReader` first (`blobToDataUrl`); individual audiobook track downloads bypass this because they use direct CDN URLs; ZIP audiobook bundles also bypass this — they are streamed back to the popup via `zip-chunk`/`zip-end` messages and written directly to disk via `FileSystemFileHandle` (requires `window.showSaveFilePicker`, which is unavailable in service workers)
 6. **SPA navigation** — uses `window.navigation` (Chrome 102+); older browsers would need a `popstate`/`pushState` shim
 7. **Audiobook `.m3u8` → `.m4a` assumption** — the URL rewrite relies on Bookmate's CDN serving `.m4a` at the same path; if the CDN layout changes, track downloads will break
 8. **ZIP audiobook memory usage** — when `asZip = true`, all tracks are fetched into memory as `ArrayBuffer` before writing the ZIP; very long audiobooks could approach the service worker memory limit

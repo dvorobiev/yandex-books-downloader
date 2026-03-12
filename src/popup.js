@@ -21,6 +21,11 @@ const progressBar    = document.getElementById('progress-bar');
 let currentBookId   = null;
 let currentBookType = null;
 
+// Variables for zip chunked download
+let pendingFileHandle = null;
+let pendingZipChunks  = [];
+let savedFilename     = '';
+
 // ── Restore saved settings and read active-tab book ID ────────────────────
 (async () => {
   const [tabs, { stripCss, maxBitRate }] = await Promise.all([
@@ -117,6 +122,30 @@ function ensurePort() {
         log(msg.text, 'info');
         if (typeof msg.pct === 'number') setProgress(msg.pct);
         break;
+      case 'zip-chunk':
+        pendingZipChunks[msg.seq] = new Uint8Array(msg.data);
+        break;
+      case 'zip-end': {
+        const handle = pendingFileHandle;
+        const chunks = pendingZipChunks.slice();
+        pendingFileHandle = null;
+        pendingZipChunks  = [];
+        (async () => {
+          try {
+            const writable = await handle.createWritable();
+            for (const chunk of chunks) await writable.write(chunk);
+            await writable.close();
+            log(`✓ Saved as: ${savedFilename}`, 'success');
+            setProgress(100);
+          } catch (err) {
+            log(`✗ Failed to write file: ${err.message}`, 'error');
+          } finally {
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = 'Download Audio';
+          }
+        })();
+        break;
+      }
       case 'success':
         log(`✓ Saved as: ${msg.filename}`, 'success');
         setProgress(100);
@@ -174,11 +203,31 @@ function handleAudiobookMeta(msg) {
   statusBox.scrollTop = statusBox.scrollHeight;
 
   btnIndividual.addEventListener('click', () => { row.remove(); startAudioDownload(false); });
-  btnZip.addEventListener('click',        () => { row.remove(); startAudioDownload(true);  });
+  btnZip.addEventListener('click',        () => { row.remove(); startAudioDownload(true, msg.titlePart || '', msg.authorSfx || ''); });
 }
 
 /** Fire the actual audio download after the user (or auto-logic) has decided on format. */
-function startAudioDownload(asZip) {
+async function startAudioDownload(asZip, titlePart = '', authorSfx = '') {
+  pendingFileHandle = null;
+
+  if (asZip) {
+    const suggestedName = `${titlePart}${authorSfx}.zip`;
+    try {
+      pendingFileHandle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }],
+      });
+      savedFilename = (await pendingFileHandle.getFile()).name;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      log(`Could not open save dialog: ${err.message}`, 'error');
+      downloadBtn.disabled = false;
+      downloadBtn.textContent = 'Download Audio';
+      return;
+    }
+  }
+
+  pendingZipChunks = [];
   downloadBtn.textContent = 'Downloading…';
   ensurePort().postMessage({
     action:     'download',

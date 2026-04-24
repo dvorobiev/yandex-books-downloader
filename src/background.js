@@ -4,9 +4,9 @@
 // Message handling (long-lived port from popup)
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { downloadBook, downloadSerial } from './lib/bookmate.js';
+import { downloadBook, downloadBookFb2, downloadSerial } from './lib/bookmate.js';
 import { downloadAudiobook, fetchAudiobookMeta } from './lib/audiobook.js';
-import { downloadBookYandex, downloadComicYandex, downloadAudiobookYandex, fetchAudiobookMetaYandex } from './lib/yandex.js';
+import { downloadBookFb2Yandex, downloadBookYandex, downloadComicYandex, downloadAudiobookYandex, fetchAudiobookMetaYandex } from './lib/yandex.js';
 import { BookType } from './lib/booktype.js';
 
 const YANDEX_HOST = 'books.yandex.ru';
@@ -45,14 +45,16 @@ chrome.runtime.onConnect.addListener((port) => {
 
     if (msg.action !== 'download') return;
 
-    const { bookid, bookType, stripCss, maxBitRate, asZip = false, source } = msg;
+    const { bookid, bookType, stripCss, maxBitRate, asZip = false, source, format = 'epub' } = msg;
 
     try {
       // ── Yandex Books path ───────────────────────────────────────────────
       if (source === YANDEX_HOST) {
         let filename;
         if (bookType === BookType.BOOK) {
-          filename = await downloadBookYandex(bookid, stripCss, onProgress);
+          filename = format === 'fb2'
+            ? await downloadBookFb2Yandex(bookid, onProgress)
+            : await downloadBookYandex(bookid, stripCss, onProgress);
         } else if (bookType === BookType.AUDIO) {
           const onZipReady = asZip ? sendBackZipInChunks(port) : null;
           filename = await downloadAudiobookYandex(bookid, maxBitRate, asZip, onProgress, onZipReady);
@@ -80,7 +82,9 @@ chrome.runtime.onConnect.addListener((port) => {
           filename = await downloadSerial(bookid, stripCss, onProgress);
           break;
         case BookType.BOOK:
-          filename = await downloadBook(bookid, stripCss, onProgress);
+          filename = format === 'fb2'
+            ? await downloadBookFb2(bookid, onProgress)
+            : await downloadBook(bookid, stripCss, onProgress);
           break;
         default:
           throw new Error(`Download not supported for book type: ${bookType}`);
@@ -116,4 +120,3 @@ function sendBackZipInChunks(port) {
     catch (_) { }
   };
 }
-

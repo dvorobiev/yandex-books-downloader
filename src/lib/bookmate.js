@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { buildEpub } from './epub.js';
+import { buildFb2 } from './fb2.js';
 import { decryptValue, extractClientParams } from './decrypt.js';
 import { mergeEpisodes } from './merge.js';
 import { fetchWithCookie, blobToDataUrl, safeName, READER_BASE } from './http.js';
@@ -165,6 +166,59 @@ export async function downloadBook(bookid, stripCss, onProgress) {
   onProgress('Saving file…', 98);
   const filename = buildEpubFilename(bookTitle, bookAuthors);
   await saveEpubBlob(epubBytes, filename);
+  return filename;
+}
+
+export async function downloadBookFb2(bookid, onProgress) {
+  const dec = new TextDecoder('utf-8');
+
+  onProgress('Fetching reader page…', 5);
+  const pageResp = await fetchWithCookie(`${READER_BASE}/${bookid}`);
+  const secret = extractClientParams(await pageResp.text()).secret;
+  if (!secret) throw new Error('Could not extract secret from page');
+
+  onProgress('Fetching metadata…', 15);
+  const [metaResp, bookInfoResp] = await Promise.all([
+    fetchWithCookie(`${READER_BASE}/p/api/v5/books/${bookid}/metadata/v4`),
+    fetchWithCookie(`${READER_BASE}/p/api/v5/books/${bookid}`),
+  ]);
+  const bookInfo = await bookInfoResp.json();
+  const bookTitle = bookInfo?.book?.title || bookid;
+  const bookAuthors = bookInfo?.book?.authors || '';
+
+  onProgress('Decrypting metadata…', 25);
+  const meta = await decryptMeta(secret, await metaResp.json());
+  meta.opf = fixOpfMetadata(meta.opf);
+
+  onProgress('Parsing OPF manifest…', 35);
+  const items = parseOpfHrefs(dec.decode(meta.opf));
+  const baseUrl = `${READER_BASE}/p/a/4/d/${meta.document_uuid}/contents/OEBPS/`;
+
+  onProgress(`Downloading ${items.length} content files…`, 40);
+  const rawContentFiles = await downloadContentFiles(items, baseUrl, onProgress, 40, 85);
+
+  fixHtmlFiles(rawContentFiles);
+
+  const contentFiles = {};
+  for (const [fname, data] of Object.entries(rawContentFiles)) {
+    contentFiles[`OEBPS/${fname}`] = data;
+  }
+  contentFiles['OEBPS/content.opf'] = meta.opf;
+
+  onProgress('Converting to FB2…', 88);
+  const fb2Bytes = buildFb2({
+    title: bookTitle,
+    authors: bookAuthors,
+    opfDir: 'OEBPS/',
+    opfText: dec.decode(meta.opf),
+    contentFiles,
+  });
+
+  onProgress('Saving file…', 98);
+  const filename = `${safeName(bookAuthors ? `${bookTitle} - ${bookAuthors}` : bookTitle)}.fb2`;
+  const blob = new Blob([fb2Bytes], { type: 'application/x-fictionbook+xml' });
+  const url = await blobToDataUrl(blob);
+  await chrome.downloads.download({ url, filename, saveAs: false });
   return filename;
 }
 

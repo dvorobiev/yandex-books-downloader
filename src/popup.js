@@ -11,6 +11,9 @@ const BookType = Object.freeze({
 
 const stripCssCheck  = document.getElementById('strip-css');
 const maxBitrateCheck = document.getElementById('max-bitrate');
+const formatRow      = document.getElementById('format-row');
+const fmtEpub        = document.getElementById('fmt-epub');
+const fmtFb2         = document.getElementById('fmt-fb2');
 const stripCssRow    = document.getElementById('strip-css-row');
 const maxBitrateRow  = document.getElementById('max-bitrate-row');
 const downloadBtn    = document.getElementById('download-btn');
@@ -21,21 +24,37 @@ const progressBar    = document.getElementById('progress-bar');
 let currentBookId   = null;
 let currentBookType = null;
 let currentSource   = null;
+let currentFormat   = 'epub';
 
 // Variables for zip chunked download
 let pendingFileHandle = null;
 let pendingZipChunks  = [];
 let savedFilename     = '';
 
+function updateDownloadButtonLabel() {
+  if (currentBookType === BookType.AUDIO) {
+    downloadBtn.textContent = 'Download Audio';
+    return;
+  }
+  if (currentBookType === BookType.BOOK) {
+    downloadBtn.textContent = currentFormat === 'fb2' ? 'Download FB2' : 'Download EPUB';
+    return;
+  }
+  downloadBtn.textContent = 'Download EPUB';
+}
+
 // ── Restore saved settings and read active-tab book ID ────────────────────
 (async () => {
-  const [tabs, { stripCss, maxBitRate }] = await Promise.all([
+  const [tabs, { stripCss, maxBitRate, format }] = await Promise.all([
     chrome.tabs.query({ active: true, currentWindow: true }),
-    chrome.storage.sync.get({ stripCss: false, maxBitRate: true }),
+    chrome.storage.sync.get({ stripCss: false, maxBitRate: true, format: 'epub' }),
   ]);
 
   stripCssCheck.checked  = stripCss;
   maxBitrateCheck.checked = maxBitRate;
+  currentFormat = format === 'fb2' ? 'fb2' : 'epub';
+  fmtEpub.checked = currentFormat === 'epub';
+  fmtFb2.checked = currentFormat === 'fb2';
 
   const url   = tabs[0]?.url || '';
   // Keep in sync with content.js BOOK_ID_RE
@@ -61,19 +80,28 @@ let savedFilename     = '';
     // Show audio-specific options, hide EPUB-specific ones
     stripCssRow.classList.add('hidden');
     maxBitrateRow.classList.remove('hidden');
-    downloadBtn.textContent = 'Download Audio';
+    formatRow.classList.add('hidden');
+    updateDownloadButtonLabel();
   } else if (currentBookType === BookType.COMICBOOK || currentBookType === BookType.SERIES) {
     // Unsupported types — show disabled button
     stripCssRow.classList.add('hidden');
     maxBitrateRow.classList.add('hidden');
+    formatRow.classList.add('hidden');
     downloadBtn.disabled = true;
     downloadBtn.title    = 'Downloading comicbooks and series is not yet supported';
     downloadBtn.textContent = 'Not supported yet';
-  } else {
-    // Show EPUB-specific options, hide audio-specific ones
+  } else if (currentBookType === BookType.SERIAL) {
+    // Serial books remain EPUB-only
     stripCssRow.classList.remove('hidden');
     maxBitrateRow.classList.add('hidden');
-    downloadBtn.textContent = 'Download EPUB';
+    formatRow.classList.add('hidden');
+    updateDownloadButtonLabel();
+  } else {
+    // Show book format options, hide audio-specific ones
+    stripCssRow.classList.remove('hidden');
+    maxBitrateRow.classList.add('hidden');
+    formatRow.classList.remove('hidden');
+    updateDownloadButtonLabel();
   }
 })();
 
@@ -84,6 +112,15 @@ stripCssCheck.addEventListener('change', () => {
 
 maxBitrateCheck.addEventListener('change', () => {
   chrome.storage.sync.set({ maxBitRate: maxBitrateCheck.checked });
+});
+
+document.querySelectorAll('input[name="fmt"]').forEach((radio) => {
+  radio.addEventListener('change', () => {
+    if (!radio.checked) return;
+    currentFormat = radio.value === 'fb2' ? 'fb2' : 'epub';
+    chrome.storage.sync.set({ format: currentFormat });
+    updateDownloadButtonLabel();
+  });
 });
 
 // ── Logging helpers ────────────────────────────────────────────────────────
@@ -152,12 +189,12 @@ function ensurePort() {
         log(`✓ Saved as: ${msg.filename}`, 'success');
         setProgress(100);
         downloadBtn.disabled = false;
-        downloadBtn.textContent = currentBookType === BookType.AUDIO ? 'Download Audio' : 'Download EPUB';
+        updateDownloadButtonLabel();
         break;
       case 'error':
         log(`✗ ${msg.text}`, 'error');
         downloadBtn.disabled = false;
-        downloadBtn.textContent = currentBookType === BookType.AUDIO ? 'Download Audio' : 'Download EPUB';
+        updateDownloadButtonLabel();
         break;
     }
   });
@@ -235,6 +272,7 @@ async function startAudioDownload(asZip, titlePart = '', authorSfx = '') {
     action:     'download',
     bookid:     currentBookId,
     bookType:   currentBookType,
+    format:     currentFormat,
     asZip,
     stripCss:   stripCssCheck.checked,
     maxBitRate: maxBitrateCheck.checked,
@@ -264,6 +302,7 @@ downloadBtn.addEventListener('click', () => {
     action:     'download',
     bookid:     currentBookId,
     bookType:   currentBookType,
+    format:     currentFormat,
     stripCss:   stripCssCheck.checked,
     maxBitRate: maxBitrateCheck.checked,
     source:     currentSource,

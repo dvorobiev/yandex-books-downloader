@@ -6,12 +6,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { buildEpub, buildZip }                   from './epub.js';
+import { buildFb2 }                              from './fb2.js';
 import { fixHtmlFiles, stripCssFiles }           from './bookmate.js';
 import { fetchWithCookie, blobToDataUrl, safeName } from './http.js';
 import { unzipAll }                              from './zipread.js';
 
 const YANDEX_API = 'https://books.yandex.ru/node-api/p/api/v5';
 const ENC        = new TextEncoder();
+const DEC        = new TextDecoder('utf-8');
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif']);
 
@@ -92,6 +94,38 @@ export async function downloadBookYandex(bookid, stripCss, onProgress) {
   onProgress('Saving…', 97);
   const filename = `${safeName(authors ? `${title} - ${authors}` : title)}.epub`;
   await saveBlob(epubBytes, filename, 'application/epub+zip');
+  return filename;
+}
+
+export async function downloadBookFb2Yandex(bookid, onProgress) {
+  onProgress('Fetching book info…', 5);
+  const { title, authors } = await fetchBookMeta(bookid);
+
+  const entries = await downloadAndUnzip(bookid, 'EPUB', onProgress);
+
+  onProgress('Fixing XHTML…', 70);
+  const contentFiles = {};
+  for (const [name, data] of Object.entries(entries)) {
+    if (name === 'mimetype') continue;
+    contentFiles[name] = data;
+  }
+  fixHtmlFiles(contentFiles);
+
+  const opfKey = Object.keys(contentFiles).find((key) => key.toLowerCase().endsWith('.opf'));
+  if (!opfKey) throw new Error('OPF file not found in downloaded EPUB');
+
+  onProgress('Converting to FB2…', 88);
+  const fb2Bytes = buildFb2({
+    title,
+    authors,
+    opfDir: opfKey.replace(/[^/]+$/, ''),
+    opfText: DEC.decode(contentFiles[opfKey]),
+    contentFiles,
+  });
+
+  onProgress('Saving…', 97);
+  const filename = `${safeName(authors ? `${title} - ${authors}` : title)}.fb2`;
+  await saveBlob(fb2Bytes, filename, 'application/x-fictionbook+xml');
   return filename;
 }
 

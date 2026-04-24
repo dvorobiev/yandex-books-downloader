@@ -138,10 +138,39 @@
     }
 
     .choice-btn:hover { background: var(--accent-dark); }
+
+    .format-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: #444444;
+      cursor: pointer;
+      text-transform: none;
+      letter-spacing: 0;
+      margin: 0;
+    }
+
+    .format-option input[type="radio"] {
+      accent-color: var(--accent);
+      width: 14px;
+      height: 14px;
+    }
   </style>
 </head>
 <body>
   <h1><img class="logo" src="logo.png" alt="" /> Яндекс Книги</h1>
+
+  <div class="options hidden" id="format-row">
+    <label class="format-option" for="fmt-epub">
+      <input type="radio" name="fmt" id="fmt-epub" value="epub" checked />
+      EPUB
+    </label>
+    <label class="format-option" for="fmt-fb2">
+      <input type="radio" name="fmt" id="fmt-fb2" value="fb2" />
+      FB2
+    </label>
+  </div>
 
   <div class="options hidden" id="strip-css-row">
     <input type="checkbox" id="strip-css" />

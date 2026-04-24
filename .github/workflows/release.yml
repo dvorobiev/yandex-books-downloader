@@ -1,37 +1,61 @@
-name: Build and Release
+name: Release
 
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v*'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Write signing key
         env:
           CRX_PRIVATE_KEY: ${{ secrets.CRX_PRIVATE_KEY }}
-        run: printf '%s' "$CRX_PRIVATE_KEY" > key.pem
+        run: printf '%s' "$CRX_PRIVATE_KEY" | base64 -d > key.pem
 
-      - name: Pack extension (CRX)
+      - name: Install crx package
+        run: npm install crx
+
+      - name: Build CRX
         run: |
-          google-chrome --pack-extension=./src --pack-extension-key=./key.pem
-          mv src.crx "bookmate-downloader-${{ github.ref_name }}.crx"
+          node - <<'EOF'
+          const CRX  = require('crx');
+          const fs   = require('fs');
+          const path = require('path');
+          (async () => {
+            const crx = new CRX({ privateKey: fs.readFileSync('key.pem') });
+            await crx.load(path.resolve('src'));
+            const buf = await crx.pack();
+            fs.writeFileSync('extension.crx', buf);
+            console.log('CRX built:', buf.length, 'bytes');
+          })().catch(e => { console.error(e); process.exit(1); });
+          EOF
 
-      - name: Pack extension (ZIP)
-        run: cd src && zip -r "../bookmate-downloader-${{ github.ref_name }}.zip" .
+      - name: Build ZIP
+        run: cd src && zip -r ../extension.zip .
 
-      - name: Create release
+      - name: Rename artifacts
+        run: |
+          mv extension.crx "yandex-books-downloader-${{ github.ref_name }}.crx"
+          mv extension.zip "yandex-books-downloader-${{ github.ref_name }}.zip"
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            bookmate-downloader-${{ github.ref_name }}.crx
-            bookmate-downloader-${{ github.ref_name }}.zip
+            yandex-books-downloader-${{ github.ref_name }}.crx
+            yandex-books-downloader-${{ github.ref_name }}.zip
           generate_release_notes: true

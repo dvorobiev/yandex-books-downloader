@@ -1,90 +1,73 @@
-# Bookmate Downloader
+# <img src="src/logo.png" height="32" valign="middle" alt=""> Яндекс Книги — Загрузчик
 
-A Chrome extension (Manifest V3) that downloads books from [Bookmate](https://bookmate.com) as EPUB files (or audio tracks) directly from your browser — no external tools or scripts required.
+Расширение Chrome для скачивания книг и аудиокниг с [books.yandex.ru](https://books.yandex.ru) прямо в браузере — без сторонних инструментов и скриптов.
 
-Download the file and read on your favourite e-book device or listen to audiobook on PC.
+## Возможности
 
-## Features
+- **Книги** — скачивание в формате EPUB, корректно открываются в Apple Books, Calibre и большинстве читалок
+- **Аудиокниги** — отдельные треки `.m4a` или единый ZIP-архив
+- **Кнопка прямо на странице** — не нужно открывать попап расширения
+- **XHTML-коррекция** — EPUB автоматически исправляется перед сохранением
+- **Опциональное удаление CSS** — для уменьшения размера файла и применения стилей читалки
+- **Выбор качества аудио** — максимальный или минимальный битрейт
 
-- **One-click download** from any Bookmate book, serial, or audiobook page via the extension popup or an injected button in the page itself
-- **EPUB assembly** built entirely in-browser — no native binaries or third-party libraries
-- **Serial books** — all episodes are fetched, merged into one combined EPUB (OPF/NCX/content merged in-memory), and saved as a single file
-- **Audiobooks** — individual `.m4a` tracks are downloaded directly from the Bookmate CDN
-- **Optional CSS stripping** to produce smaller, style-free EPUB files
-- **Bitrate selection** for audiobooks (max or min quality)
-- Filenames are automatically derived from the book title and author(s)
-- Based on Python scripts: [bookmate_downloader](https://github.com/ilyakharlamov/bookmate_downloader) and [RU_Bookmate_downloader](https://github.com/kettle017/RU_Bookmate_downloader)
-- Written in co-authorship with [Claude Sonnet 4.6](https://www.anthropic.com/news/claude-sonnet-4-6).
+| Тип контента | Формат | Статус |
+|---|---|---|
+| Книги | EPUB | ✅ |
+| Аудиокниги | M4A (треки или ZIP) | ✅ |
+| Комиксы | — | ❌ только в приложении |
 
-## Requirements
+## Требования
 
-- Google Chrome (or any Chromium-based browser that supports Manifest V3)
-- Bookmate account with a Paid Active Subscription (Piracy is not supported!)
+- Google Chrome или любой Chromium-браузер с поддержкой Manifest V3
+- Аккаунт Яндекс Книг с активной подпиской
 
-## Installation
+## Установка
 
-### Option A — Pre-built release (recommended)
+1. Скачайте и распакуйте [последний релиз](../../releases)
+2. Откройте `chrome://extensions/`
+3. Включите **Режим разработчика** (переключатель справа вверху)
+4. Нажмите **Загрузить распакованное** и выберите папку `src/`
 
-1. Go to the [Releases](../../releases) page and download the latest `bookmate-downloader-vX.X.X.crx` file.
-2. Open Chrome and navigate to `chrome://extensions`.
-3. Enable **Developer mode** (toggle in the top-right corner).
-4. Drag and drop the downloaded `.crx` file onto the Extensions page.
-5. Click **Add extension** when Chrome prompts you.
+## Использование
 
-> **Note:** Chrome may display a warning about installing extensions from outside the Web Store — this is expected for sideloaded extensions. The extension is signed with a consistent private key so Chrome will recognise it as the same extension across updates.
+1. Войдите в аккаунт на [books.yandex.ru](https://books.yandex.ru)
+2. Откройте страницу книги (`/books/...`) или аудиокниги (`/audiobooks/...`)
+3. Нажмите иконку расширения в тулбаре или кнопку скачивания на странице
+4. Для аудиокниг с несколькими главами выберите формат: **Individual Files** или **ZIP**
+5. Файл сохранится в папку загрузок:
+   - Книга: `Название - Автор.epub`
+   - Аудио (1 трек): `Название - Автор.m4a`
+   - Аудио (несколько треков): `Название - Chapter N - Автор.m4a` / `.zip`
 
-Alternatively, download the `bookmate-downloader-vX.X.X.zip` archive from the same release, extract it, and follow the **Load unpacked** steps below.
+## Настройки
 
-### Option B — Load unpacked (development)
+| Опция | По умолчанию | Описание |
+|---|---|---|
+| Strip CSS | Выкл | Удаляет стили из EPUB — для применения стилей читалки |
+| Max bit rate | Вкл | Скачивает аудио в максимальном качестве |
 
-1. Clone or download this repository.
-2. Open Chrome and navigate to `chrome://extensions`.
-3. Enable **Developer mode** (toggle in the top-right corner).
-4. Click **Load unpacked** and select the `src/` folder.
-5. The extension icon will appear in your toolbar.
+## Разрешения
 
-## Usage
-
-1. Log in to [bookmate.com](https://bookmate.com).
-2. Navigate to a supported page:
-   - Regular book: `https://bookmate.com/books/XXXXXXXX`
-   - Serial book:  `https://bookmate.com/serials/XXXXXXXX`
-   - Audiobook:    `https://bookmate.com/audiobooks/XXXXXXXX`
-3. Either:
-   - Click the **Bookmate Downloader** toolbar icon and press **Download EPUB** / **Download Audio**, or
-   - Click the **Download button** injected directly into the page
-4. Files are saved to your default downloads folder:
-   - EPUB / serial: `<Title> - <Author>.epub`
-   - Audiobook, single track: `<Title> - <Author>.m4a`
-   - Audiobook, multiple tracks: `<Title> - Chapter N - <Author>.m4a` (supported download as zip folder)
-
-For large audiobooks with multiple tracks, it is recommended to download them as a zip folder to browser blocking multiple file downloads.
-
-## Options
-
-| Option | Default | Visible on | Description |
-|---|---|---|---|
-| Strip CSS | Off | Books / Serials | Empties all `.css` files inside the EPUB, useful for applying your own reader styles. |
-| Max bit rate | On | Audiobooks | Downloads the highest-quality audio variant; uncheck to prefer the smaller low-bitrate file. |
-
-Settings are persisted via `chrome.storage.sync` and shared across devices.
-
-## Permissions
-
-| Permission | Reason |
+| Разрешение | Причина |
 |---|---|
-| `cookies` | Read the session cookie to authenticate API requests |
-| `downloads` | Save the assembled EPUB to disk |
-| `activeTab` | Detect the current book ID from the page URL |
-| `storage` | Persist user preferences (Strip CSS toggle) |
-| `tabs` | Query the active tab URL to populate the book ID |
-| `https://*.bookmate.com/*` | Fetch reader pages, metadata, and content files |
+| `cookies` | Авторизация через сессионные куки |
+| `downloads` | Сохранение файла на диск |
+| `activeTab` | Определение ID книги по URL страницы |
+| `storage` | Сохранение настроек пользователя |
+| `tabs` | Чтение URL активной вкладки |
+| `https://books.yandex.ru/*` | API Яндекс Книг |
+| `https://audio.bookmate.ru/*` | CDN аудиотреков |
 
-## Limitations
-- The extension relies on Bookmate's internal reader API; it may break if Bookmate changes their API or encryption scheme.
-- Comic books and other non-EPUB/non-audio formats are not supported.
-- Serial episode CSS files from episode 2 onwards are intentionally skipped; all episodes share the first episode's stylesheet.
+## Ограничения
 
-## License
+- Комиксы доступны только в мобильном приложении — веб-ридера нет
+- Расширение использует внутренний API Яндекс Книг и может перестать работать при его изменении
 
-This project is provided for personal and educational use only. Respect Bookmate's Terms of Service and only download books you are licensed to access.
+## Основано на
+
+Форк расширения [Bookmate Downloader](https://github.com/Sirozha1337/bookmate_downloader_extension) с добавлением поддержки books.yandex.ru.
+
+## Лицензия
+
+Только для личного использования. Скачивайте только те книги, к которым у вас есть доступ по подписке.

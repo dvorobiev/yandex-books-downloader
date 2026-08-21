@@ -43,23 +43,6 @@ export async function unzipAll(buffer) {
 }
 
 async function inflateRaw(compressed) {
-  const ds     = new DecompressionStream('deflate-raw');
-  const writer = ds.writable.getWriter();
-  const reader = ds.readable.getReader();
-
-  writer.write(compressed);
-  writer.close();
-
-  const chunks = [];
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-
-  const total = chunks.reduce((n, c) => n + c.length, 0);
-  const out   = new Uint8Array(total);
-  let   pos   = 0;
-  for (const c of chunks) { out.set(c, pos); pos += c.length; }
-  return out;
+  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }

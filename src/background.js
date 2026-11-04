@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Message handling (long-lived port from popup)
@@ -9,7 +9,11 @@ import { downloadAudiobook, fetchAudiobookMeta } from './lib/audiobook.js';
 import { downloadBookFb2Yandex, downloadBookYandex, downloadComicYandex, downloadAudiobookYandex, fetchAudiobookMetaYandex } from './lib/yandex.js';
 import { BookType } from './lib/booktype.js';
 
-const YANDEX_HOST = 'books.yandex.ru';
+const YANDEX_HOSTS = ['books.yandex.ru', 'yandex.ru', 'books.yandex.net', 'bookmate.ru'];
+function isYandexSource(source) {
+  if (!source) return false;
+  return YANDEX_HOSTS.some(h => source.includes(h)) || source.includes('yandex');
+}
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'bookmate-download') return;
@@ -27,12 +31,10 @@ chrome.runtime.onConnect.addListener((port) => {
     // ── audiobook-meta: fetch track count so popup can ask about ZIP vs individual
     if (msg.action === 'audiobook-meta') {
       try {
-        if (msg.source === YANDEX_HOST) {
+        if (isYandexSource(msg.source)) {
           const { bookTitle, tracks, titlePart, authorSfx } = await fetchAudiobookMetaYandex(msg.bookid);
           send('audiobook-meta', { trackCount: tracks.length, title: bookTitle, titlePart, authorSfx });
         } else {
-          const cookie = await chrome.cookies.get({ url: 'https://bookmate.com', name: 'bms' });
-          if (!cookie) throw new Error('bms cookie not found — please log in to bookmate.com first');
           const { bookTitle, tracks, titlePart, authorSfx } = await fetchAudiobookMeta(msg.bookid);
           send('audiobook-meta', { trackCount: tracks.length, title: bookTitle, titlePart, authorSfx });
         }
@@ -49,7 +51,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
     try {
       // ── Yandex Books path ───────────────────────────────────────────────
-      if (source === YANDEX_HOST) {
+      if (isYandexSource(source)) {
         let filename;
         if (bookType === BookType.BOOK) {
           filename = format === 'fb2'
@@ -59,16 +61,13 @@ chrome.runtime.onConnect.addListener((port) => {
           const onZipReady = asZip ? sendBackZipInChunks(port) : null;
           filename = await downloadAudiobookYandex(bookid, maxBitRate, asZip, onProgress, onZipReady);
         } else {
-          throw new Error(`Download not supported for type "${bookType}" on books.yandex.ru`);
+          throw new Error(`Download not supported for type "${bookType}" on Yandex Books`);
         }
         if (filename != null) send('success', { filename });
         return;
       }
 
       // ── bookmate.com path ───────────────────────────────────────────────
-      const cookie = (await chrome.cookies.get({ url: 'https://bookmate.com', name: 'bms' }));
-      if (!cookie) throw new Error('bms cookie not found — please log in to bookmate.com first');
-
       let filename;
       switch (bookType) {
         case BookType.AUDIO: {
@@ -100,7 +99,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 /**
- * Send ZIP bytes back to the popup/content in 16 MB chunks so the
+ * Send ZIP bytes back to the popup/content in 4 MB chunks so the
  * window-context FileSystemFileHandle can write them directly
  * 
  * @param {chrome.runtime.Port} port - The port to send messages back to
@@ -108,7 +107,7 @@ chrome.runtime.onConnect.addListener((port) => {
  */
 function sendBackZipInChunks(port) {
   return async (zipBytes) => {
-    const CHUNK = 1024 * 1024 * 16;
+    const CHUNK = 1024 * 1024 * 4;
     const total = Math.ceil(zipBytes.byteLength / CHUNK);
     for (let i = 0; i < total; i++) {
       const slice = zipBytes.slice(i * CHUNK, (i + 1) * CHUNK);

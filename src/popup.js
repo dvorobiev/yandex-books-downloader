@@ -9,17 +9,18 @@ const BookType = Object.freeze({
   SERIES:    'series',
 });
 
-const stripCssCheck  = document.getElementById('strip-css');
+const urlInput        = document.getElementById('url-input');
+const stripCssCheck   = document.getElementById('strip-css');
 const maxBitrateCheck = document.getElementById('max-bitrate');
-const formatRow      = document.getElementById('format-row');
-const fmtEpub        = document.getElementById('fmt-epub');
-const fmtFb2         = document.getElementById('fmt-fb2');
-const stripCssRow    = document.getElementById('strip-css-row');
-const maxBitrateRow  = document.getElementById('max-bitrate-row');
-const downloadBtn    = document.getElementById('download-btn');
-const statusBox      = document.getElementById('status-box');
-const progressWrap   = document.getElementById('progress-wrap');
-const progressBar    = document.getElementById('progress-bar');
+const formatRow       = document.getElementById('format-row');
+const fmtEpub         = document.getElementById('fmt-epub');
+const fmtFb2          = document.getElementById('fmt-fb2');
+const stripCssRow     = document.getElementById('strip-css-row');
+const maxBitrateRow   = document.getElementById('max-bitrate-row');
+const downloadBtn     = document.getElementById('download-btn');
+const statusBox       = document.getElementById('status-box');
+const progressWrap    = document.getElementById('progress-wrap');
+const progressBar     = document.getElementById('progress-bar');
 
 let currentBookId   = null;
 let currentBookType = null;
@@ -43,6 +44,108 @@ function updateDownloadButtonLabel() {
   downloadBtn.textContent = 'Download EPUB';
 }
 
+function parseBookUrl(urlStr) {
+  if (!urlStr) return null;
+  const trimmed = urlStr.trim();
+  if (!trimmed) return null;
+
+  let urlObj = null;
+  try {
+    urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+  } catch (e) {
+    if (/^[A-Za-z0-9_-]{4,64}$/.test(trimmed)) {
+      return {
+        source: 'books.yandex.ru',
+        bookid: trimmed,
+        bookType: BookType.BOOK,
+      };
+    }
+    return null;
+  }
+
+  const host = urlObj.hostname.toLowerCase();
+  const pathname = urlObj.pathname;
+
+  const match = pathname.match(/\/(books?|audiobooks?|serials?|comicbooks?|series|read|listen|reader|audio)\/([A-Za-z0-9_-]{4,64})/i);
+
+  if (!match) {
+    const qId = urlObj.searchParams.get('id') || urlObj.searchParams.get('bookid');
+    if (qId && /^[A-Za-z0-9_-]{4,64}$/.test(qId)) {
+      return {
+        source: host,
+        bookid: qId,
+        bookType: pathname.includes('audio') ? BookType.AUDIO : BookType.BOOK,
+      };
+    }
+    return null;
+  }
+
+  const category = match[1].toLowerCase();
+  const bookid = match[2];
+
+  let bookType = BookType.BOOK;
+  if (category.startsWith('audio') || category === 'listen') {
+    bookType = BookType.AUDIO;
+  } else if (category.startsWith('serial')) {
+    bookType = BookType.SERIAL;
+  } else if (category.startsWith('comic')) {
+    bookType = BookType.COMICBOOK;
+  } else if (category === 'series') {
+    bookType = BookType.SERIES;
+  } else {
+    bookType = BookType.BOOK;
+  }
+
+  return {
+    source: host,
+    bookid: bookid,
+    bookType: bookType,
+  };
+}
+
+function applyBookDetails(parsed) {
+  if (!parsed) {
+    currentBookId = null;
+    currentBookType = null;
+    currentSource = null;
+    downloadBtn.disabled = true;
+    downloadBtn.title = 'Перейдите на страницу книги или вставьте ссылку выше';
+    downloadBtn.textContent = 'Перейдите на страницу книги или введите ссылку';
+    return;
+  }
+
+  currentSource = parsed.source;
+  currentBookId = parsed.bookid;
+  currentBookType = parsed.bookType;
+
+  downloadBtn.disabled = false;
+  downloadBtn.title = '';
+
+  if (currentBookType === BookType.AUDIO) {
+    stripCssRow.classList.add('hidden');
+    maxBitrateRow.classList.remove('hidden');
+    formatRow.classList.add('hidden');
+    updateDownloadButtonLabel();
+  } else if (currentBookType === BookType.COMICBOOK || currentBookType === BookType.SERIES) {
+    stripCssRow.classList.add('hidden');
+    maxBitrateRow.classList.add('hidden');
+    formatRow.classList.add('hidden');
+    downloadBtn.disabled = true;
+    downloadBtn.title = 'Скачивание комиксов и серий пока не поддерживается';
+    downloadBtn.textContent = 'Не поддерживается';
+  } else if (currentBookType === BookType.SERIAL) {
+    stripCssRow.classList.remove('hidden');
+    maxBitrateRow.classList.add('hidden');
+    formatRow.classList.add('hidden');
+    updateDownloadButtonLabel();
+  } else {
+    stripCssRow.classList.remove('hidden');
+    maxBitrateRow.classList.add('hidden');
+    formatRow.classList.remove('hidden');
+    updateDownloadButtonLabel();
+  }
+}
+
 // ── Restore saved settings and read active-tab book ID ────────────────────
 (async () => {
   const [tabs, { stripCss, maxBitRate, format }] = await Promise.all([
@@ -50,60 +153,29 @@ function updateDownloadButtonLabel() {
     chrome.storage.sync.get({ stripCss: false, maxBitRate: true, format: 'epub' }),
   ]);
 
-  stripCssCheck.checked  = stripCss;
+  stripCssCheck.checked   = stripCss;
   maxBitrateCheck.checked = maxBitRate;
   currentFormat = format === 'fb2' ? 'fb2' : 'epub';
   fmtEpub.checked = currentFormat === 'epub';
   fmtFb2.checked = currentFormat === 'fb2';
 
-  const url   = tabs[0]?.url || '';
-  // Keep in sync with content.js BOOK_ID_RE
-  const match = url.match(/\/\/(?:(?:[a-z]+\.)?bookmate\.com|books\.yandex\.ru)\/(books|serials|audiobooks|comicbooks|series)\/([A-Za-z0-9]{6,12})(?:[/?#]|$)/);
-  currentSource = match ? new URL(url).hostname : null;
-  currentBookId   = match ? match[2] : null;
-  currentBookType = match ? {
-    books:      BookType.BOOK,
-    serials:    BookType.SERIAL,
-    audiobooks: BookType.AUDIO,
-    comicbooks: BookType.COMICBOOK,
-    series:     BookType.SERIES,
-  }[match[1]] : null;
+  const url = tabs[0]?.url || '';
+  const parsed = parseBookUrl(url);
 
-  if (!currentBookId) {
-    downloadBtn.disabled = true;
-    downloadBtn.title    = 'Navigate to a Bookmate book, serial, or audiobook page first';
-    downloadBtn.textContent = 'Navigate to a Bookmate book, serial or audiobook page first...';
-    return;
-  }
-
-  if (currentBookType === BookType.AUDIO) {
-    // Show audio-specific options, hide EPUB-specific ones
-    stripCssRow.classList.add('hidden');
-    maxBitrateRow.classList.remove('hidden');
-    formatRow.classList.add('hidden');
-    updateDownloadButtonLabel();
-  } else if (currentBookType === BookType.COMICBOOK || currentBookType === BookType.SERIES) {
-    // Unsupported types — show disabled button
-    stripCssRow.classList.add('hidden');
-    maxBitrateRow.classList.add('hidden');
-    formatRow.classList.add('hidden');
-    downloadBtn.disabled = true;
-    downloadBtn.title    = 'Downloading comicbooks and series is not yet supported';
-    downloadBtn.textContent = 'Not supported yet';
-  } else if (currentBookType === BookType.SERIAL) {
-    // Serial books remain EPUB-only
-    stripCssRow.classList.remove('hidden');
-    maxBitrateRow.classList.add('hidden');
-    formatRow.classList.add('hidden');
-    updateDownloadButtonLabel();
+  if (parsed) {
+    if (urlInput) urlInput.value = url;
+    applyBookDetails(parsed);
   } else {
-    // Show book format options, hide audio-specific ones
-    stripCssRow.classList.remove('hidden');
-    maxBitrateRow.classList.add('hidden');
-    formatRow.classList.remove('hidden');
-    updateDownloadButtonLabel();
+    applyBookDetails(null);
   }
 })();
+
+if (urlInput) {
+  urlInput.addEventListener('input', () => {
+    const parsed = parseBookUrl(urlInput.value);
+    applyBookDetails(parsed);
+  });
+}
 
 // ── Persist preferences whenever they change ───────────────────────────────────
 stripCssCheck.addEventListener('change', () => {

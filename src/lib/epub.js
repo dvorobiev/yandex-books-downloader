@@ -9,13 +9,8 @@ import { crc32 } from './crc32.js';
 const ENC = new TextEncoder();
 
 export async function deflateRaw(data) {
-  const cs = new CompressionStream('deflate-raw');
-  const writer = cs.writable.getWriter();
-  // Do NOT await write/close before reading — that deadlocks due to backpressure.
-  // Fire them without await and consume the readable side concurrently.
-  writer.write(data);
-  writer.close();
-  return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

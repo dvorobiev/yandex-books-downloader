@@ -255,7 +255,13 @@ function showChoicePanel(trackCount, wrapper, btn, onChoose, onCancel) {
 function injectButton(bookid, bookType) {
   if (document.getElementById('bm-dl-btn')) return true; // already present
 
-  const container = document.querySelector('.buttons-row__container');
+  let container = document.querySelector('.buttons-row__container, [class*="buttons-row"], [class*="ButtonsRow"], [class*="BookCard_actions"], [class*="book-actions"], [class*="BookHeader_actions"]');
+  if (!container) {
+    const readBtn = document.querySelector('a[href*="/read/"], a[href*="/listen/"], [class*="add-button"]');
+    if (readBtn && readBtn.parentElement) {
+      container = readBtn.parentElement;
+    }
+  }
   if (!container) return false; // container not rendered yet
 
   ensureStyles();
@@ -412,35 +418,59 @@ function injectButton(bookid, bookType) {
 // Book-ID regex — keep in sync with popup.js
 // Matches /books/{id}, /serials/{id}, /audiobooks/{id}, /comicbooks/{id}, /series/{id}
 // Works for both bookmate.com and books.yandex.ru (same URL structure)
-const BOOK_ID_RE = /\/(books|serials|audiobooks|comicbooks|series)\/([A-Za-z0-9]{6,12})(?:[\/?#]|$)/;
+function parseBookUrl(urlStr) {
+  if (!urlStr) return null;
+  try {
+    const urlObj = new URL(urlStr);
+    const pathname = urlObj.pathname;
+    const match = pathname.match(/\/(books?|audiobooks?|serials?|comicbooks?|series|read|listen|reader|audio)\/([A-Za-z0-9_-]{4,64})/i);
+
+    if (!match) {
+      const qId = urlObj.searchParams.get('id') || urlObj.searchParams.get('bookid');
+      if (qId && /^[A-Za-z0-9_-]{4,64}$/.test(qId)) {
+        return { bookid: qId, bookType: pathname.includes('audio') ? BookType.AUDIO : BookType.BOOK };
+      }
+      return null;
+    }
+
+    const category = match[1].toLowerCase();
+    const bookid = match[2];
+
+    let bookType = BookType.BOOK;
+    if (category.startsWith('audio') || category === 'listen') {
+      bookType = BookType.AUDIO;
+    } else if (category.startsWith('serial')) {
+      bookType = BookType.SERIAL;
+    } else if (category.startsWith('comic')) {
+      bookType = BookType.COMICBOOK;
+    } else if (category === 'series') {
+      bookType = BookType.SERIES;
+    } else {
+      bookType = BookType.BOOK;
+    }
+
+    return { bookid, bookType };
+  } catch (e) {
+    return null;
+  }
+}
 
 let pendingObserver = null;
 
 function handleUrl(url) {
-  // Cancel any observer still waiting from a previous navigation
   if (pendingObserver) {
     pendingObserver.disconnect();
     pendingObserver = null;
   }
 
-  const match = new URL(url).pathname.match(BOOK_ID_RE);
-  if (!match) return; // not a book page
-  const bookType = {
-    books:      BookType.BOOK,
-    serials:    BookType.SERIAL,
-    audiobooks: BookType.AUDIO,
-    comicbooks: BookType.COMICBOOK,
-    series:     BookType.SERIES,
-  }[match[1]];
-  const bookid = match[2];
+  const parsed = parseBookUrl(url);
+  if (!parsed) return;
 
-  // Comicbooks and series are not supported for download
+  const { bookid, bookType } = parsed;
   if (bookType === BookType.COMICBOOK || bookType === BookType.SERIES) return;
 
-  // Container may already be in the DOM (e.g. hard navigation directly to a book page)
   if (injectButton(bookid, bookType)) return;
 
-  // Otherwise wait for the SPA to render the button row, then inject and stop watching
   pendingObserver = new MutationObserver(() => {
     if (injectButton(bookid, bookType)) {
       pendingObserver.disconnect();

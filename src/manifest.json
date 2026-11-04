@@ -12,7 +12,9 @@
   ],
   "host_permissions": [
     "https://*.bookmate.com/*",
+    "https://*.bookmate.ru/*",
     "https://books.yandex.ru/*",
+    "https://*.yandex.ru/*",
     "https://*.yandex.net/*",
     "https://*.yandexcloud.net/*",
     "https://audio.bookmate.ru/*"
@@ -21,7 +23,9 @@
     {
       "matches": [
         "https://*.bookmate.com/*",
-        "https://books.yandex.ru/*"
+        "https://*.bookmate.ru/*",
+        "https://books.yandex.ru/*",
+        "https://*.yandex.ru/books/*"
       ],
       "js": ["content.js"]
     }

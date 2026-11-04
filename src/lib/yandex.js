@@ -184,7 +184,6 @@ export async function downloadAudiobookYandex(bookid, maxBitRate, asZip, onProgr
       zipFiles.push({ name: `${trackName(num)}.m4a`, data: new Uint8Array(await resp.arrayBuffer()) });
     }
     if (!zipFiles.length) throw new Error('No tracks could be downloaded');
-    const { buildZip } = await import('./epub.js');
     onProgress('Building ZIP…', 92);
     await onZipReady(buildZip(zipFiles));
     return null;

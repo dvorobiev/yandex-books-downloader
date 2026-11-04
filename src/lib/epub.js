@@ -4,7 +4,7 @@
 // DEFLATE via CompressionStream (built-in, no deps)
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { crc32 } from './crc32.js';
+import { crc32, crc32Async } from './crc32.js';
 
 const ENC = new TextEncoder();
 
@@ -138,4 +138,34 @@ export function buildZip(files) {
     return { nameBytes, method: 0, crc: crc32(raw), comp: raw, raw };
   });
   return assembleParts(entries);
+}
+
+/** Stream a plain ZIP from an async iterable of files without assembling a second full copy. */
+export async function streamZip(files, writeChunk) {
+  const entries = [];
+  const chunkSize = 512 * 1024;
+  let offset = 0;
+
+  for await (const file of files) {
+    const nameBytes = ENC.encode(file.name);
+    const raw = file.data instanceof Uint8Array ? file.data : new Uint8Array(file.data);
+    const crc = await crc32Async(raw);
+    const localHeader = mkLocalHeader(nameBytes, 0, crc, raw.length, raw.length);
+
+    await writeChunk(localHeader);
+    for (let start = 0; start < raw.length; start += chunkSize) {
+      await writeChunk(raw.subarray(start, Math.min(start + chunkSize, raw.length)));
+    }
+
+    entries.push({ nameBytes, crc, size: raw.length, offset });
+    offset += localHeader.length + raw.length;
+  }
+
+  if (!entries.length) throw new Error('No tracks could be downloaded');
+
+  const centralParts = entries.map(entry =>
+    mkCentralEntry(entry.nameBytes, 0, entry.crc, entry.size, entry.size, entry.offset)
+  );
+  const cdSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  await writeChunk(concat([...centralParts, mkEndRecord(entries.length, cdSize, offset)]));
 }

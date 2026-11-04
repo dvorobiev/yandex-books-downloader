@@ -281,7 +281,7 @@ function injectButton(bookid, bookType) {
   btn.addEventListener('click', async () => {
     let state = 'initial';
     let pendingFileHandle = null; // FileSystemFileHandle for zip-chunk/zip-end
-    let pendingZipChunks = [];   // assembled chunks indexed by seq
+    let pendingFileWriter = null;
     let savedFilename = null;
     btn.disabled = true;
     btn.innerHTML = ICON_DOWNLOADING;
@@ -303,7 +303,7 @@ function injectButton(bookid, bookType) {
       port.postMessage({ action: 'download', bookid, bookType, asZip, stripCss, maxBitRate, source: window.location.hostname });
     }
 
-    port.onMessage.addListener((msg) => {
+    port.onMessage.addListener(async (msg) => {
       if (msg.type === 'progress') {
         if (msg.type !== state) {
           btn.innerHTML = ICON_DOWNLOADING;
@@ -315,19 +315,23 @@ function injectButton(bookid, bookType) {
       }
 
       if (msg.type === 'zip-chunk') {
-        pendingZipChunks[msg.seq] = new Uint8Array(msg.data);
+        try {
+          if (!pendingFileWriter) throw new Error('ZIP file is not open for writing');
+          await pendingFileWriter.write(new Uint8Array(msg.data));
+          port.postMessage({ action: 'zip-ack', seq: msg.seq });
+        } catch (err) {
+          port.postMessage({ action: 'zip-fail', seq: msg.seq, text: err.message });
+        }
       }
 
       if (msg.type === 'zip-end') {
-        const handle = pendingFileHandle;
-        const chunks = pendingZipChunks.slice();
+        const writer = pendingFileWriter;
+        pendingFileWriter = null;
         pendingFileHandle = null;
-        pendingZipChunks = [];
         (async () => {
           try {
-            const writable = await handle.createWritable();
-            for (const chunk of chunks) await writable.write(chunk);
-            await writable.close();
+            if (!writer) throw new Error('ZIP file writer was closed unexpectedly');
+            await writer.close();
             resetBtn();
             toast.setProgress(100);
             toast.log(`✓ Saved as: ${savedFilename ?? msg.filename}`, 'success');
@@ -364,7 +368,7 @@ function injectButton(bookid, bookType) {
                 suggestedName: `${msg.titlePart}${msg.authorSfx}.zip`,
                 types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }],
               });
-              pendingZipChunks = [];
+              pendingFileWriter = await pendingFileHandle.createWritable();
               savedFilename = (await pendingFileHandle.getFile()).name;
             } catch (err) {
               if (err.name === 'AbortError') { resetBtn(); return; }
@@ -392,6 +396,11 @@ function injectButton(bookid, bookType) {
         setTimeout(() => toast.hide(), 6000);
       } else if (msg.type === 'error') {
         resetBtn();
+        if (pendingFileWriter) {
+          pendingFileWriter.abort().catch(() => {});
+          pendingFileWriter = null;
+          pendingFileHandle = null;
+        }
         toast.log(`✗ ${msg.text}`, 'error');
       }
     });

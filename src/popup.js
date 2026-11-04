@@ -29,7 +29,7 @@ let currentFormat   = 'epub';
 
 // Variables for zip chunked download
 let pendingFileHandle = null;
-let pendingZipChunks  = [];
+let pendingFileWriter = null;
 let savedFilename     = '';
 
 function updateDownloadButtonLabel() {
@@ -224,7 +224,7 @@ function ensurePort() {
   if (port) return port;
   port = chrome.runtime.connect({ name: 'bookmate-download' });
 
-  port.onMessage.addListener((msg) => {
+  port.onMessage.addListener(async (msg) => {
     switch (msg.type) {
       case 'audiobook-meta':
         handleAudiobookMeta(msg);
@@ -234,18 +234,22 @@ function ensurePort() {
         if (typeof msg.pct === 'number') setProgress(msg.pct);
         break;
       case 'zip-chunk':
-        pendingZipChunks[msg.seq] = new Uint8Array(msg.data);
+        try {
+          if (!pendingFileWriter) throw new Error('ZIP file is not open for writing');
+          await pendingFileWriter.write(new Uint8Array(msg.data));
+          port.postMessage({ action: 'zip-ack', seq: msg.seq });
+        } catch (err) {
+          port.postMessage({ action: 'zip-fail', seq: msg.seq, text: err.message });
+        }
         break;
       case 'zip-end': {
-        const handle = pendingFileHandle;
-        const chunks = pendingZipChunks.slice();
+        const writer = pendingFileWriter;
+        pendingFileWriter = null;
         pendingFileHandle = null;
-        pendingZipChunks  = [];
         (async () => {
           try {
-            const writable = await handle.createWritable();
-            for (const chunk of chunks) await writable.write(chunk);
-            await writable.close();
+            if (!writer) throw new Error('ZIP file writer was closed unexpectedly');
+            await writer.close();
             log(`✓ Saved as: ${savedFilename}`, 'success');
             setProgress(100);
           } catch (err) {
@@ -264,6 +268,11 @@ function ensurePort() {
         updateDownloadButtonLabel();
         break;
       case 'error':
+        if (pendingFileWriter) {
+          pendingFileWriter.abort().catch(() => {});
+          pendingFileWriter = null;
+          pendingFileHandle = null;
+        }
         log(`✗ ${msg.text}`, 'error');
         downloadBtn.disabled = false;
         updateDownloadButtonLabel();
@@ -320,6 +329,7 @@ function handleAudiobookMeta(msg) {
 /** Fire the actual audio download after the user (or auto-logic) has decided on format. */
 async function startAudioDownload(asZip, titlePart = '', authorSfx = '') {
   pendingFileHandle = null;
+  pendingFileWriter = null;
 
   if (asZip) {
     const suggestedName = `${titlePart}${authorSfx}.zip`;
@@ -328,6 +338,7 @@ async function startAudioDownload(asZip, titlePart = '', authorSfx = '') {
         suggestedName,
         types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }],
       });
+      pendingFileWriter = await pendingFileHandle.createWritable();
       savedFilename = (await pendingFileHandle.getFile()).name;
     } catch (err) {
       if (err.name === 'AbortError') return;
@@ -338,7 +349,6 @@ async function startAudioDownload(asZip, titlePart = '', authorSfx = '') {
     }
   }
 
-  pendingZipChunks = [];
   downloadBtn.textContent = 'Downloading…';
   ensurePort().postMessage({
     action:     'download',

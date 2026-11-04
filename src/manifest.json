@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Яндекс Книги — Загрузчик",
-  "version": "1.4",
+  "version": "1.4.1",
   "description": "Скачивайте книги и аудиокниги с books.yandex.ru и bookmate.com в форматах EPUB, FB2 и M4A.",
   "permissions": [
     "cookies",

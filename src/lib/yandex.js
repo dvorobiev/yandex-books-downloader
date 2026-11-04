@@ -175,17 +175,20 @@ export async function downloadAudiobookYandex(bookid, maxBitRate, asZip, onProgr
   }
 
   if (asZip && onZipReady) {
-    const zipFiles = [];
-    for (let i = 0; i < tracks.length; i++) {
-      const { num, url } = resolveUrl(tracks[i], i);
-      onProgress(`Fetching track ${num}/${tracks.length}…`, 10 + Math.round((i + 1) / tracks.length * 80));
-      if (!url) continue;
-      const resp = await fetch(url); // CDN auth is JWT-in-URL, no cookies needed
-      zipFiles.push({ name: `${trackName(num)}.m4a`, data: new Uint8Array(await resp.arrayBuffer()) });
+    async function* zipFiles() {
+      for (let i = 0; i < tracks.length; i++) {
+        const { num, url } = resolveUrl(tracks[i], i);
+        onProgress(`Fetching track ${num}/${tracks.length}…`, 10 + Math.round(i / tracks.length * 80));
+        if (!url) continue;
+        const resp = await fetch(url); // CDN auth is JWT-in-URL, no cookies needed
+        if (!resp.ok) throw new Error(`Track ${num} download failed: ${resp.status}`);
+        const data = new Uint8Array(await resp.arrayBuffer());
+        yield { name: `${trackName(num)}.m4a`, data };
+        onProgress(`Packed track ${num}/${tracks.length} into ZIP…`, 10 + Math.round((i + 1) / tracks.length * 80));
+      }
     }
-    if (!zipFiles.length) throw new Error('No tracks could be downloaded');
-    onProgress('Building ZIP…', 92);
-    await onZipReady(buildZip(zipFiles));
+
+    await onZipReady(zipFiles());
     return null;
   }
 

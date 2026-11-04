@@ -8,6 +8,7 @@ import { downloadBook, downloadBookFb2, downloadSerial } from './lib/bookmate.js
 import { downloadAudiobook, fetchAudiobookMeta } from './lib/audiobook.js';
 import { downloadBookFb2Yandex, downloadBookYandex, downloadComicYandex, downloadAudiobookYandex, fetchAudiobookMetaYandex } from './lib/yandex.js';
 import { BookType } from './lib/booktype.js';
+import { streamZip } from './lib/epub.js';
 
 const YANDEX_HOSTS = ['books.yandex.ru', 'yandex.ru', 'books.yandex.net', 'bookmate.ru'];
 function isYandexSource(source) {
@@ -99,23 +100,67 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 /**
- * Send ZIP bytes back to the popup/content in 4 MB chunks so the
- * window-context FileSystemFileHandle can write them directly
+ * Stream ZIP chunks to the popup/content and wait for each disk write
+ * before sending the next chunk.
  * 
  * @param {chrome.runtime.Port} port - The port to send messages back to
  * @returns {Function} - Async callback that accepts zipBytes
  */
 function sendBackZipInChunks(port) {
-  return async (zipBytes) => {
-    const CHUNK = 1024 * 1024 * 4;
-    const total = Math.ceil(zipBytes.byteLength / CHUNK);
-    for (let i = 0; i < total; i++) {
-      const slice = zipBytes.slice(i * CHUNK, (i + 1) * CHUNK);
-      try { port.postMessage({ type: 'zip-chunk', seq: i, data: Array.from(slice), ln: slice.length }); }
-      catch (_) { break; }
-    }
+  return async (zipData) => {
+    let seq = 0;
+    let pendingAck = null;
 
-    try { port.postMessage({ type: 'zip-end' }); }
-    catch (_) { }
+    const onControlMessage = (msg) => {
+      if (!pendingAck || msg.seq !== pendingAck.seq) return;
+      if (msg.action === 'zip-ack') pendingAck.finish();
+      if (msg.action === 'zip-fail') pendingAck.finish(new Error(msg.text || 'Could not write ZIP data'));
+    };
+    const onDisconnect = () => pendingAck?.finish(new Error('Connection lost while writing ZIP'));
+
+    port.onMessage.addListener(onControlMessage);
+    port.onDisconnect.addListener(onDisconnect);
+
+    const writeChunk = async (bytes) => {
+      const chunkSeq = seq++;
+      const acknowledged = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pendingAck = null;
+          reject(new Error('Timed out while writing ZIP data'));
+        }, 120000);
+        pendingAck = {
+          seq: chunkSeq,
+          finish(error) {
+            clearTimeout(timer);
+            pendingAck = null;
+            if (error) reject(error);
+            else resolve();
+          },
+        };
+      });
+
+      try {
+        port.postMessage({ type: 'zip-chunk', seq: chunkSeq, data: Array.from(bytes) });
+      } catch (error) {
+        pendingAck?.finish(error);
+      }
+      await acknowledged;
+    };
+
+    try {
+      if (zipData && typeof zipData[Symbol.asyncIterator] === 'function') {
+        await streamZip(zipData, writeChunk);
+      } else {
+        const zipBytes = zipData instanceof Uint8Array ? zipData : new Uint8Array(zipData);
+        const chunkSize = 512 * 1024;
+        for (let start = 0; start < zipBytes.length; start += chunkSize) {
+          await writeChunk(zipBytes.subarray(start, Math.min(start + chunkSize, zipBytes.length)));
+        }
+      }
+      port.postMessage({ type: 'zip-end' });
+    } finally {
+      port.onMessage.removeListener(onControlMessage);
+      port.onDisconnect.removeListener(onDisconnect);
+    }
   };
 }

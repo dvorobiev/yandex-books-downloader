@@ -23,3 +23,18 @@ export function crc32(data) {
   }
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
+
+export async function crc32Async(data) {
+  let crc = 0xFFFFFFFF;
+  const blockSize = 2 * 1024 * 1024;
+
+  for (let start = 0; start < data.length; start += blockSize) {
+    const end = Math.min(start + blockSize, data.length);
+    for (let i = start; i < end; i++) {
+      crc = CRC_TABLE[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    if (end < data.length) await new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
